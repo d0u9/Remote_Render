@@ -1,0 +1,10 @@
+user:           "username"
+ip:             "ip or host name"
+rmt_tmp_dir:    /media
+debug:          true
+
+# result_file:  "/home/user/result.output"
+# error_file:   "/home/user/error.output"
+# speed:        4
+# bitrate,      30
+# file_dir:     "/path/to/video/dir"
