@@ -11,6 +11,7 @@ import (
     "io/ioutil"
     "path/filepath"
     "gopkg.in/yaml.v2"
+    "github.com/fatih/color"
     "github.com/google/uuid"
     "github.com/spf13/cobra"
     "remote_render/pkg/public"
@@ -23,6 +24,11 @@ import (
 
 var (
     DftConfig       *config
+    Red             func(a ...interface{}) string
+    Magenta         func(a ...interface{}) string
+    Yellow          func(a ...interface{}) string
+    Cyan            func(a ...interface{}) string
+    Green           func(a ...interface{}) string
 )
 
 func init() {
@@ -46,6 +52,12 @@ func init() {
         Debug:          false,
         CfgFile:        "",
     }
+
+    Red     = color.New(color.FgRed).SprintFunc()
+    Magenta = color.New(color.FgMagenta).SprintFunc()
+    Yellow  = color.New(color.FgYellow).SprintFunc()
+    Cyan    = color.New(color.FgCyan).SprintFunc()
+    Green   = color.New(color.FgGreen).SprintFunc()
 }
 
 type config struct {
@@ -280,10 +292,19 @@ func (app *App) EnumerateFilesFromFileDir() {
             srcFile = filepath.Join(srcDir, path)
         }
 
+        var fsize int64
+        if finfo, ferr := os.Stat(srcFile); ferr != nil {
+            log.Errorf("Get file stat failed: %s, err: %v\n", srcFile, ferr)
+            return nil
+        } else {
+            fsize = finfo.Size()
+        }
+
         // TODO: Test if this file is a video file
 
         app.tasks = append(app.tasks, &public.Task {
-            SrcFile: srcFile,
+            SrcFile:    srcFile,
+            Size:       fsize,
             Err: nil,
         })
 
@@ -298,6 +319,7 @@ func (app *App) EnumerateFilesFromFileDir() {
 
 func (app *App) FilterErrorTasks(tsk *public.Task, stg public.Stage) (*public.Task, error) {
     if tsk.Err != nil {
+        log.Infof("[%3d/%3d] [%s], Src: %s\n", tsk.Idx, tsk.AllNr, Red("[ERROR]"), tsk.SrcFile)
         tsk.DieOn = stg
         app.tskCntChan <- true
     }
@@ -318,7 +340,7 @@ func (app *App) S1Core(quitCtx *public.QuitCtx) {
             select {
             case s1 := <- app.toRmt.ResultChan():
                 if curTask, err = app.FilterErrorTasks(s1, public.STG_COPT_TO); err == nil {
-                    log.Debugf("[%03d] [S1] Get tmp file done: %s\n", curTask.Idx, curTask.RmtFile)
+                    log.Debugf("[%3d/%3d] [S1] Get tmp file done: %s\n", curTask.Idx, curTask.AllNr, curTask.RmtFile)
                     waitingNewData = false
                 }
             case <- quitCtx.Done():
@@ -328,7 +350,7 @@ func (app *App) S1Core(quitCtx *public.QuitCtx) {
         } else {
             select {
             case <-app.render.ReadyChan():
-                log.Debugf("[%03d] [S1] PUSH file to render: %s\n", curTask.Idx, curTask.RmtFile)
+                log.Debugf("[%3d/%3d] [S1] PUSH file to render: %s\n", curTask.Idx, curTask.AllNr, curTask.RmtFile)
                 app.render.Push(curTask)
                 waitingNewData = true
             case <- quitCtx.Done():
@@ -352,7 +374,7 @@ func (app *App) S2Core(quitCtx *public.QuitCtx) {
             select {
             case s2 := <- app.render.ResultChan():
                 if curTask, err = app.FilterErrorTasks(s2, public.STG_RENDER); err == nil {
-                    log.Debugf("[%03d] [S2] Get rendered file done: %s\n", curTask.Idx, curTask.RenderedFile)
+                    log.Debugf("[%3d/%3d] [S2] Get rendered file done: %s\n", curTask.Idx, curTask.AllNr, curTask.RenderedFile)
                     waitingNewData = false
                 }
             case <- quitCtx.Done():
@@ -361,7 +383,7 @@ func (app *App) S2Core(quitCtx *public.QuitCtx) {
         } else {
             select {
             case <-app.toHost.ReadyChan():
-                log.Debugf("[%03d] [S2] Push rendered file: %s\n", curTask.Idx, curTask.RenderedFile)
+                log.Debugf("[%3d/%3d] [S2] Push rendered file: %s\n", curTask.Idx, curTask.AllNr, curTask.RenderedFile)
                 app.toHost.Push(curTask)
                 waitingNewData = true
             case <- quitCtx.Done():
@@ -386,7 +408,7 @@ func (app *App) S3Core(quitCtx *public.QuitCtx) {
             select {
             case s3 := <- app.toHost.ResultChan():
                 if curTask, err = app.FilterErrorTasks(s3, public.STG_COPY_FROM); err == nil {
-                    log.Debugf("[%03d] [S3] Get rendered file: %s\n", curTask.Idx, curTask.DstFile)
+                    log.Debugf("[%3d/%3d] [S3] Get rendered file: %s\n", curTask.Idx, curTask.AllNr, curTask.DstFile)
                     waitingNewData = false
                     cmdCancel, cmdResultChan = app.rCmd.Run("rm", "-fr", s3.RmtFile, s3.RenderedFile)
                 }
@@ -402,7 +424,9 @@ func (app *App) S3Core(quitCtx *public.QuitCtx) {
                     curTask.DieOn = public.STG_DONE
                     app.suc_tasks = append(app.suc_tasks, curTask)
                 }
-                log.Debugf("[%03d] [S3] Removed rendered file: %s\n", curTask.Idx, curTask.DstFile)
+                log.Debugf("[%3d/%3d] [S3] Removed rendered file: %s\n", curTask.Idx, curTask.AllNr, curTask.DstFile)
+                size := public.ByteCountIEC(curTask.Size)
+                log.Infof("[%3d/%3d] [S3] [%s], Size: %s, SRC: %s, DST: %s\n", curTask.Idx, curTask.AllNr, Red("DONE"), Yellow(size), Cyan(curTask.SrcFile), Green(curTask.DstFile))
                 app.tskCntChan <- true
                 waitingNewData = true
             case <- quitCtx.Done():
@@ -451,7 +475,9 @@ func (app *App) DistributeTasks() {
             log.Warnf("[XXX] [DISTRIBUTOR] DistributeTasks() Stops\n")
             goto out
         case <- app.toRmt.ReadyChan():
-            log.Infof("[%03d] [DISTRIBUTOR] Push task: %s\n", tsk.Idx, tsk.String())
+            size := public.ByteCountIEC(tsk.Size)
+            tskInfo := fmt.Sprintf("Size: %s, SRC: %s, DST: %s", Yellow(size), Cyan(tsk.SrcFile), Green(tsk.DstFile))
+            log.Infof("[%3d/%3d] [%s] Push Task: %s\n", tsk.Idx, tsk.AllNr, Magenta("DISTRIBUTOR"), tskInfo)
             app.toRmt.Push(tsk)
         }
     }
@@ -463,6 +489,9 @@ out:
 }
 
 func (app *App) AssignTmpFile() {
+    allNr := len(app.tasks)
+
+    log.Infof("------------------- File List (BELOW) -------------------\n")
     for i, tsk := range app.tasks {
         ext := filepath.Ext(tsk.SrcFile)
         nameNoExt := strings.TrimSuffix(filepath.Base(tsk.SrcFile), ext)
@@ -474,7 +503,8 @@ func (app *App) AssignTmpFile() {
             dstDir = filepath.Dir(tsk.SrcFile)
         }
 
-        tsk.Idx = i
+        tsk.AllNr = allNr
+        tsk.Idx = i + 1
         tsk.DieOn = public.STG_INIT
         tsk.RmtFile = filepath.Join(app.config.RmtTmpDir, rmtFname)
         tsk.RenderedFile = filepath.Join(app.config.RmtTmpDir, renderedFile)
@@ -488,7 +518,10 @@ func (app *App) AssignTmpFile() {
         }
 
         tsk.DstFile = filepath.Join(dstDir, fmt.Sprintf("%s%s%s", nameNoExt, suffix, ext))
+        log.Infof("- SRC: %s\n", tsk.SrcFile)
+        log.Infof("+ DST: %s\n", tsk.DstFile)
     }
+    log.Infof("------------------- File List (ABOVE) -------------------\n")
 }
 
 func (app *App) Prepare() {
@@ -570,8 +603,12 @@ func (app *App) DumpResult() {
     for _, tsk := range app.tasks {
         if tsk.Err == nil && tsk.DieOn == public.STG_DONE {
             suc_tasks = append(suc_tasks, tsk)
+        } else {
+            if tsk.Err == nil {
+                tsk.Err = fmt.Errorf("Task is canceled")
+            }
+            err_tasks = append(err_tasks, tsk)
         }
-        err_tasks = append(err_tasks, tsk)
     }
 
     for _, tsk := range suc_tasks {

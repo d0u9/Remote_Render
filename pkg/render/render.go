@@ -74,7 +74,11 @@ func (r *Render) Render(tsk *public.Task) (cmd.CmdCancelFunc, cmd.ResultChan) {
 
     cmdOpts = append(cmdOpts, tsk.RenderedFile)
 
-    log.Debugf("[%03d] [RENDER] COMMAND: %v\n", tsk.Idx, cmdOpts)
+    cmdStr := ""
+    for _, opt := range cmdOpts {
+        cmdStr = fmt.Sprintf("%s %s", cmdStr, opt)
+    }
+    log.Infof("[%3d/%3d] [RENDER] COMMAND: %s\n", tsk.Idx, tsk.AllNr, cmdStr)
 
     return r.rCmd.Run(cmdOpts...)
 }
@@ -94,7 +98,7 @@ func (r *Render) Watch() {
         if r.isFree {
             select {
             case curTask = <- r.inC:
-                log.Infof("[%03d] [RENDER] Srarting render: %s\n", curTask.Idx, curTask.SrcFile)
+                log.Infof("[%3d/%3d] [RENDER] Srarting render: %s\n", curTask.Idx, curTask.AllNr, curTask.SrcFile)
                 r.isFree = false
                 cmdCancel, cmdResultChan = r.Render(curTask)
             case <-r.ctx.Done():
@@ -104,7 +108,7 @@ func (r *Render) Watch() {
         } else {
             select {
             case cmdResult := <- cmdResultChan:
-                log.Infof("[%03d] [RENDER] Finished, new file: %s\n", curTask.Idx, curTask.SrcFile)
+                log.Infof("[%3d/%3d] [RENDER] Finished, new file: %s\n", curTask.Idx, curTask.AllNr, curTask.SrcFile)
                 if cmdResult.Err != nil {
                     curTask.Err = fmt.Errorf("%s", cmdResult.Output)
                 }
