@@ -4,6 +4,7 @@ import (
     "os"
     "fmt"
     // "sync"
+    "sort"
     "time"
     "syscall"
     "strings"
@@ -51,6 +52,7 @@ func init() {
         RmtTmpDir:       "/tmp/speed_render",
         Debug:          false,
         CfgFile:        "",
+        TestMode:       false,
     }
 
     Red     = color.New(color.FgRed).SprintFunc()
@@ -73,6 +75,7 @@ type config struct {
     ErrFile         string    `yaml:"error_file,omitempty"`     // failed files
     Debug           bool      `yaml:"debug,omitempty"`          // debug mode
     CfgFile         string                                      // config file
+    TestMode        bool      `yaml:"test_mode,omitempty"`      // print files to be processed, and quit
 }
 
 type App struct {
@@ -90,6 +93,7 @@ type App struct {
 
     rstFile     *os.File
     errFile     *os.File
+    TaskNr      int
 }
 
 func New() *App {
@@ -161,6 +165,9 @@ func (app *App) ReadCfgFile() {
     }
     if app.config.Debug     == DftConfig.Debug {
         app.config.Debug    = localCfg.Debug
+    }
+    if app.config.TestMode  == DftConfig.TestMode {
+        app.config.TestMode = localCfg.TestMode
     }
 }
 
@@ -255,8 +262,8 @@ func (app *App) ValidateConfig() {
     }
 
     speed := app.config.Speed
-    if speed != 0 && (speed < 0 || speed > 10) {
-        log.Fatalf("Speed = %d is invalid, must be >= 0 and <= 10", speed)
+    if speed != 0 && (speed < 0 || speed > 100) {
+        log.Fatalf("Speed = %d is invalid, must be >= 0 and <= 100", speed)
         os.Exit(1)
     }
 
@@ -272,27 +279,55 @@ func (app *App) EnumerateFilesFromFileDir() {
         os.Exit(1)
     }
 
-    walkFunc := func(path string, info os.FileInfo, err error) error {
-        if err != nil {
-            log.Warn("prevent panic by handling failure accessing a path %q: %v\n", path, err)
-            return err
+    walkFunc := func(path string, info os.FileInfo, inerr error) error {
+        if inerr != nil {
+            log.Warn("prevent panic by handling failure accessing a path %q: %v\n", path, inerr)
+            return inerr
+        }
+
+        if info.IsDir() {
+            return nil
         }
 
         if !info.Mode().IsRegular() && (info.Mode() & os.ModeSymlink == 0) {
             return nil
         }
 
-        var srcFile, srcDir string
+        var relFile, srcFile, srcDir string
+        var err error = nil
+        var fsize int64 = 0
+
+        srcFile = path
+        extUppered := strings.ToUpper(filepath.Ext(path))
+        validExts := []string {
+            ".MP4",
+            ".MOV",
+        }
+
+        for _, vext := range validExts {
+            if extUppered == vext {
+                goto go_on
+            }
+        }
+
+        err = fmt.Errorf("Wrong extension, %s", extUppered)
+        goto add_task
+
+go_on:
         if info.Mode() & os.ModeSymlink != 0 {
-            relFile, _ := filepath.EvalSymlinks(path)
-            srcFile, _ = filepath.Abs(relFile)
-            srcDir = filepath.Dir(srcFile)
+            relFile, err = filepath.EvalSymlinks(path)
+            if err != nil {
+                goto add_task
+            }
+            srcFile, err = filepath.Abs(relFile)
+            if err != nil {
+                goto add_task
+            }
         } else {
             srcDir = app.config.FileDir
             srcFile = filepath.Join(srcDir, path)
         }
 
-        var fsize int64
         if finfo, ferr := os.Stat(srcFile); ferr != nil {
             log.Errorf("Get file stat failed: %s, err: %v\n", srcFile, ferr)
             return nil
@@ -302,10 +337,12 @@ func (app *App) EnumerateFilesFromFileDir() {
 
         // TODO: Test if this file is a video file
 
+
+add_task:
         app.tasks = append(app.tasks, &public.Task {
             SrcFile:    srcFile,
             Size:       fsize,
-            Err: nil,
+            Err:        err,
         })
 
         return nil
@@ -315,11 +352,16 @@ func (app *App) EnumerateFilesFromFileDir() {
         log.Fatal("Errro walking the path: %s: %v\n", app.config.FileDir, err)
         os.Exit(1)
     }
+
+    sort.Slice(app.tasks, func(i, j int) bool {
+        return app.tasks[i].Size < app.tasks[j].Size
+    })
+
 }
 
 func (app *App) FilterErrorTasks(tsk *public.Task, stg public.Stage) (*public.Task, error) {
     if tsk.Err != nil {
-        log.Infof("[%3d/%3d] [%s], Src: %s\n", tsk.Idx, tsk.AllNr, Red("[ERROR]"), tsk.SrcFile)
+        log.Infof("[%3d/%3d] [%s], Src: %s, Reason: %s\n", tsk.Idx, tsk.AllNr, Red("ERROR"), tsk.SrcFile, Red(tsk.Err.Error()))
         tsk.DieOn = stg
         app.tskCntChan <- true
     }
@@ -469,16 +511,26 @@ func (app *App) DistributeTasks() {
 
     var i int
     var tsk *public.Task
+    canSend := false
     for i, tsk = range app.tasks {
+        if canSend {
+            if tsk.Err != nil {
+                continue
+            }
+            size := public.ByteCountIEC(tsk.Size)
+            tskInfo := fmt.Sprintf("Size: %s, SRC: %s, DST: %s", Yellow(size), Cyan(tsk.SrcFile), Green(tsk.DstFile))
+            log.Infof("[%3d/%3d] [%s] Push Task: %s\n", tsk.Idx, tsk.AllNr, Magenta("DISTRIBUTOR"), tskInfo)
+            app.toRmt.Push(tsk)
+            canSend = false
+        }
+
         select {
         case <- quitCtx.Done():
             log.Warnf("[XXX] [DISTRIBUTOR] DistributeTasks() Stops\n")
             goto out
         case <- app.toRmt.ReadyChan():
-            size := public.ByteCountIEC(tsk.Size)
-            tskInfo := fmt.Sprintf("Size: %s, SRC: %s, DST: %s", Yellow(size), Cyan(tsk.SrcFile), Green(tsk.DstFile))
-            log.Infof("[%3d/%3d] [%s] Push Task: %s\n", tsk.Idx, tsk.AllNr, Magenta("DISTRIBUTOR"), tskInfo)
-            app.toRmt.Push(tsk)
+            canSend = true
+
         }
     }
 
@@ -489,10 +541,13 @@ out:
 }
 
 func (app *App) AssignTmpFile() {
-    allNr := len(app.tasks)
 
     log.Infof("------------------- File List (BELOW) -------------------\n")
-    for i, tsk := range app.tasks {
+    allNr := 0
+    for _, tsk := range app.tasks {
+        if tsk.Err != nil {
+            continue
+        }
         ext := filepath.Ext(tsk.SrcFile)
         nameNoExt := strings.TrimSuffix(filepath.Base(tsk.SrcFile), ext)
         randomName := uuid.New().String()
@@ -503,8 +558,6 @@ func (app *App) AssignTmpFile() {
             dstDir = filepath.Dir(tsk.SrcFile)
         }
 
-        tsk.AllNr = allNr
-        tsk.Idx = i + 1
         tsk.DieOn = public.STG_INIT
         tsk.RmtFile = filepath.Join(app.config.RmtTmpDir, rmtFname)
         tsk.RenderedFile = filepath.Join(app.config.RmtTmpDir, renderedFile)
@@ -518,10 +571,28 @@ func (app *App) AssignTmpFile() {
         }
 
         tsk.DstFile = filepath.Join(dstDir, fmt.Sprintf("%s%s%s", nameNoExt, suffix, ext))
-        log.Infof("- SRC: %s\n", tsk.SrcFile)
-        log.Infof("+ DST: %s\n", tsk.DstFile)
+        allNr = allNr + 1
+        tsk.Idx = allNr
+        log.Infof("- SRC: [%s] %s\n", Yellow(public.ByteCountIEC(tsk.Size)), tsk.SrcFile)
+        log.Infof("+ DST: [%s] %s\n", "", tsk.DstFile)
     }
     log.Infof("------------------- File List (ABOVE) -------------------\n")
+    app.TaskNr = allNr
+
+    log.Infof("------------------- %s (BELOW) -------------------\n", Red("Error Files"))
+    for _, tsk := range app.tasks {
+        if tsk.Err == nil {
+            tsk.AllNr = allNr
+            continue
+        }
+        log.Errorf("%s error: %v\n", tsk.SrcFile, tsk.Err)
+    }
+    log.Infof("------------------- %s (ABOVE) -------------------\n", Red("Error Files"))
+
+    if app.config.TestMode {
+        log.Warnf("In Test Mode, quiting...\n")
+        os.Exit(0)
+    }
 }
 
 func (app *App) Prepare() {
@@ -572,7 +643,7 @@ func (app *App) doit() {
             select {
             case <-app.tskCntChan:
                 i = i + 1
-                if i >= len(app.tasks) {
+                if i >= app.TaskNr {
                     log.Warn("All Done")
                     allDone <- true
                 }
@@ -647,4 +718,5 @@ func (app *App) cmdSetup() {
     flags.StringVarP(&app.config.RmtTmpDir, "tmp",      "t",    DftConfig.RmtTmpDir,"tmp dir on remote host")
     flags.BoolVar   (&app.config.Debug,     "debug",            DftConfig.Debug,    "enable debug mode")
     flags.StringVarP(&app.config.CfgFile,   "config",   "c",    DftConfig.CfgFile,  "config file")
+    flags.BoolVarP  (&app.config.TestMode,  "test",     "q",    DftConfig.TestMode, "list files to process")
 }

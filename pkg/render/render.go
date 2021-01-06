@@ -59,11 +59,10 @@ func (r *Render) Render(tsk *public.Task) (cmd.CmdCancelFunc, cmd.ResultChan) {
     cmdOpts := []string {
         "ffmpeg",
         "-i",           tsk.RmtFile,
-        "-an",
     }
 
     if r.speed != 0 {
-        cmd := fmt.Sprintf("-filter:v \"copy,setpts=%.3f*PTS\"", calCoe(float64(r.speed)))
+        cmd := fmt.Sprintf("-an -filter:v \"copy,setpts=%.3f*PTS\"", calCoe(float64(r.speed)))
         cmdOpts = append(cmdOpts, cmd)
     }
 

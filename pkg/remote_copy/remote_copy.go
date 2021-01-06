@@ -83,9 +83,9 @@ func (r *RemoteCopy) Watch() {
             case curTask = <- r.inC:
                 r.isFree = false
                 if r.toRemote {
-                    log.Infof("[%3d/%3d] [COPY->] %s to %s\n", curTask.Idx, curTask.AllNr, curTask.SrcFile, curTask.RmtFile)
+                    log.Infof("[%3d/%3d] [COPY-> %s] %s to %s\n", curTask.Idx, curTask.AllNr, public.ByteCountIEC(curTask.Size), curTask.SrcFile, curTask.RmtFile)
                 } else {
-                    log.Infof("[%3d/%3d] [<-COPY] %s to %s\n", curTask.Idx, curTask.AllNr, curTask.RenderedFile, curTask.DstFile)
+                    log.Infof("[%3d/%3d] [<-COPY %s] %s to %s\n", curTask.Idx, curTask.AllNr, public.ByteCountIEC(curTask.Size), curTask.RenderedFile, curTask.DstFile)
                 }
                 cmdCancel, cmdResultChan = r.Copy(curTask)
             case <- r.ctx.Done():
@@ -96,9 +96,9 @@ func (r *RemoteCopy) Watch() {
             select {
             case cmdResult := <- cmdResultChan:
                 if r.toRemote {
-                    log.Infof("[%3d/%3d] [COPY->] DONE %s to %s\n", curTask.Idx, curTask.AllNr, curTask.SrcFile, curTask.RmtFile)
+                    log.Infof("[%3d/%3d] [COPY-> %s] DONE %s to %s\n", curTask.Idx, curTask.AllNr, public.ByteCountIEC(curTask.Size), curTask.SrcFile, curTask.RmtFile)
                 } else {
-                    log.Infof("[%3d/%3d] [<-COPY] DONE %s to %s\n", curTask.Idx, curTask.AllNr, curTask.RenderedFile, curTask.DstFile)
+                    log.Infof("[%3d/%3d] [<-COPY %s] DONE %s to %s\n", curTask.Idx, curTask.AllNr, public.ByteCountIEC(curTask.Size), curTask.RenderedFile, curTask.DstFile)
                 }
                 if cmdResult.Err != nil {
                     curTask.Err = fmt.Errorf("%s", cmdResult.Output)

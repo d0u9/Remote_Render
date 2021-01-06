@@ -8,6 +8,7 @@ type Stage      int
 
 const (
     STG_INIT        Stage = iota
+    STG_DISTRIBUTE
     STG_COPT_TO
     STG_RENDER
     STG_COPY_FROM
@@ -56,7 +57,6 @@ func ByteCountIEC(b int64) string {
         div *= unit
         exp++
     }
-    return fmt.Sprintf("%.1f %ciB",
-        float64(b)/float64(div), "KMGTPE"[exp])
+    return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
