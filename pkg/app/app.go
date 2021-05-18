@@ -256,8 +256,8 @@ func (app *App) ValidateConfig() {
     }
 
     bitrate := app.config.Bitrate
-    if bitrate != 0 && (bitrate < 30 || bitrate > 100) {
-        log.Fatalf("Bitrate = %d is invalid, must be >= 30 and <= 100", bitrate)
+    if bitrate != 0 && (bitrate < 10 || bitrate > 100) {
+        log.Fatalf("Bitrate = %d is invalid, must be >= 10 and <= 100", bitrate)
         os.Exit(1)
     }
 
