@@ -13,6 +13,7 @@ type Render struct {
     speed       int
     user        string
     ip          string
+    ffmpeg      string
     inC         chan *public.Task
     outC        chan *public.Task
     bin         string
@@ -22,14 +23,14 @@ type Render struct {
     readyC      chan interface{}
 }
 
-func New(user, ip string, bitrate, speed int, ctx *public.QuitCtx) (*Render, error) {
+func New(user, ip string, bitrate, speed int, ffmpeg string, ctx *public.QuitCtx) (*Render, error) {
     bin, err := exec.LookPath("ssh")
     if err != nil {
         return nil, err
     }
 
     if bitrate == 0 && speed == 0 {
-        return nil, fmt.Errorf("Speed and bitrate both are 0")
+        return nil, fmt.Errorf("speed and bitrate both are 0")
     }
 
     return &Render {
@@ -37,6 +38,7 @@ func New(user, ip string, bitrate, speed int, ctx *public.QuitCtx) (*Render, err
         speed:      speed,
         user:       user,
         ip:         ip,
+        ffmpeg:     ffmpeg,
         inC:        make(chan *public.Task, 1),
         outC:       make(chan *public.Task, 1),
         bin:        bin,
@@ -56,8 +58,13 @@ func calCoe(speed float64) float64 {
 }
 
 func (r *Render) Render(tsk *public.Task) (cmd.CmdCancelFunc, cmd.ResultChan) {
+    ffmpeg_bin := r.ffmpeg
+    if ffmpeg_bin == "" {
+        ffmpeg_bin = "ffmpeg"
+    }
+
     cmdOpts := []string {
-        "ffmpeg",
+        ffmpeg_bin,
         "-i",           tsk.RmtFile,
     }
 

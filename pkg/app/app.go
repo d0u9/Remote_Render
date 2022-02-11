@@ -47,6 +47,7 @@ func init() {
         ListFile:       "",
         User:           "",
         IP:             "",
+        Ffmpeg:         "ffmpeg",
         RstFile:        filepath.Join(homedir, "remote_render.output"),
         ErrFile:        filepath.Join(homedir, "remote_render.err"),
         RmtTmpDir:       "/tmp/speed_render",
@@ -70,6 +71,7 @@ type config struct {
     NewDir          string    `yaml:"new_dir,omitempty"`        // save converted video to this directory
     User            string    `yaml:"user,omitempty"`           // username for ssh
     IP              string    `yaml:"ip,omitempty"`             // ip address for ssh
+    Ffmpeg          string    `yaml:"ffmpeg,omitempty"`         // ffmpeg binarg path
     RmtTmpDir       string    `yaml:"rmt_tmp_dir,omitempty"`    // remote temp dir
     RstFile         string    `yaml:"result_file,omitempty"`    // Successfully processed files
     ErrFile         string    `yaml:"error_file,omitempty"`     // failed files
@@ -169,6 +171,9 @@ func (app *App) ReadCfgFile() {
     if app.config.TestMode  == DftConfig.TestMode {
         app.config.TestMode = localCfg.TestMode
     }
+    if app.config.Ffmpeg    == DftConfig.Ffmpeg {
+        app.config.Ffmpeg   = localCfg.Ffmpeg
+    }
 }
 
 func (app *App) Init() {
@@ -193,7 +198,7 @@ func (app *App) Init() {
     app.seqQuit.AddSeq(quitCtx)
 
     quitCtx = public.NewQuitCtx(20)
-    render, err := render.New(app.config.User, app.config.IP, app.config.Bitrate, app.config.Speed, quitCtx)
+    render, err := render.New(app.config.User, app.config.IP, app.config.Bitrate, app.config.Speed, app.config.Ffmpeg, quitCtx)
     if err != nil {
         log.Fatal("Cannot create new render")
         os.Exit(1)
@@ -310,7 +315,7 @@ func (app *App) EnumerateFilesFromFileDir() {
             }
         }
 
-        err = fmt.Errorf("Wrong extension, %s", extUppered)
+        err = fmt.Errorf("wrong extension, %s", extUppered)
         goto add_task
 
 go_on:
@@ -676,7 +681,7 @@ func (app *App) DumpResult() {
             suc_tasks = append(suc_tasks, tsk)
         } else {
             if tsk.Err == nil {
-                tsk.Err = fmt.Errorf("Task is canceled")
+                tsk.Err = fmt.Errorf("task is canceled")
             }
             err_tasks = append(err_tasks, tsk)
         }
@@ -719,4 +724,5 @@ func (app *App) cmdSetup() {
     flags.BoolVar   (&app.config.Debug,     "debug",            DftConfig.Debug,    "enable debug mode")
     flags.StringVarP(&app.config.CfgFile,   "config",   "c",    DftConfig.CfgFile,  "config file")
     flags.BoolVarP  (&app.config.TestMode,  "test",     "q",    DftConfig.TestMode, "list files to process")
+    flags.StringVar (&app.config.Ffmpeg,    "ffmpeg",           DftConfig.Ffmpeg,   "ffmpeg binary path")
 }

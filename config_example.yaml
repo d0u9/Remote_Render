@@ -2,6 +2,7 @@ user:           "username"
 ip:             "ip or host name"
 rmt_tmp_dir:    /media
 debug:          true
+ffmpeg:         "/bin/ffmpeg"
 
 # result_file:  "/home/user/result.output"
 # error_file:   "/home/user/error.output"
